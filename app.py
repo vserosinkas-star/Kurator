@@ -1,10 +1,9 @@
-from flask import Flask, request, jsonify
-import requests
 import os
 import logging
 import re
-import json
 import time
+from flask import Flask, request, jsonify
+import requests
 
 # Настройка логирования
 logging.basicConfig(level=logging.INFO)
@@ -290,6 +289,41 @@ def test_gsheets():
             "error": str(e),
             "error_type": type(e).__name__
         })
+
+@app.route('/test_connection')
+def test_connection():
+    """Тест подключения к Google Sheets"""
+    try:
+        from gsheets import test_connection as gs_test
+        result = gs_test()
+        return jsonify(result)
+    except Exception as e:
+        return jsonify({"success": False, "error": str(e)})
+
+@app.route('/raw_data')
+def raw_data():
+    """Получение сырых данных из Google Sheets"""
+    try:
+        from gsheets import init_gsheets
+        client = init_gsheets()
+        if not client:
+            return jsonify({"success": False, "error": "Failed to initialize client"})
+            
+        SPREADSHEET_ID = os.environ.get('SPREADSHEET_ID')
+        spreadsheet = client.open_by_key(SPREADSHEET_ID)
+        sheet = spreadsheet.sheet1
+        
+        # Получаем сырые данные
+        all_values = sheet.get_all_values()
+        
+        return jsonify({
+            "success": True,
+            "row_count": len(all_values),
+            "headers": all_values[0] if all_values else [],
+            "first_rows": all_values[1:6] if len(all_values) > 1 else []  # первые 5 строк данных
+        })
+    except Exception as e:
+        return jsonify({"success": False, "error": str(e)})
 
 if __name__ == '__main__':
     app.run(host='0.0.0.0', port=3000)
