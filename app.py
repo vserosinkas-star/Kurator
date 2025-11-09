@@ -155,7 +155,7 @@ def webhook():
                 )
             else:
                 # Поиск по ВСП
-                vsp_match = re.search(r'\b(\d{4}/\d{3,4})\b', text)
+                vsp_match = re.search(r'\b(\d{3,4}/\d{1,5})\b', text)
                 if vsp_match:
                     vsp_code = vsp_match.group(1)
                     record = search_by_vsp(vsp_code)
