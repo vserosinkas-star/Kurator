@@ -1,13 +1,19 @@
 import os
 import json
 import re
+import time
 from flask import Flask, request, jsonify
 import requests
 
 app = Flask(__name__)
 BOT_TOKEN = os.environ.get('BOT_TOKEN')
 
-# Mock данные для теста
+# Кэширование
+data_cache = None
+cache_timestamp = 0
+CACHE_DURATION = 300  # 5 минут
+
+# Mock данные как fallback
 MOCK_DATA = {
     "8369/069": {
         "vsp": "8369/069", 
@@ -39,6 +45,44 @@ MOCK_DATA = {
     }
 }
 
+def get_data():
+    """Получение данных с кэшированием"""
+    global data_cache, cache_timestamp
+    
+    current_time = time.time()
+    
+    # Если кэш устарел или отсутствует, обновляем
+    if data_cache is None or current_time - cache_timestamp > CACHE_DURATION:
+        print("Updating data cache...")
+        
+        # Пытаемся загрузить из Google Sheets
+        try:
+            from gsheets import load_data_from_sheets
+            sheets_data = load_data_from_sheets()
+            if sheets_data:
+                data_cache = sheets_data
+                cache_timestamp = current_time
+                print("Data loaded from Google Sheets")
+                return data_cache
+        except Exception as e:
+            print(f"Error loading from Google Sheets: {e}")
+        
+        # Если Google Sheets не доступен, используем mock данные
+        vsp_map = MOCK_DATA
+        city_map = {}
+        for record in MOCK_DATA.values():
+            city = record['city']
+            if city:
+                if city not in city_map:
+                    city_map[city] = []
+                city_map[city].append(record)
+        
+        data_cache = (vsp_map, city_map)
+        cache_timestamp = current_time
+        print("Data loaded from MOCK_DATA (fallback)")
+    
+    return data_cache
+
 def normalize_city(city: str) -> str:
     """Нормализация названия города для поиска"""
     if not city:
@@ -50,18 +94,19 @@ def normalize_city(city: str) -> str:
 
 def search_by_vsp(vsp_code):
     """Поиск по коду ВСП"""
-    # Нормализуем код ВСП - удаляем пробелы и приводим к верхнему регистру
+    vsp_map, city_map = get_data()
     vsp_code = vsp_code.strip().upper().replace(' ', '')
-    return MOCK_DATA.get(vsp_code)
+    return vsp_map.get(vsp_code)
 
 def search_by_city(city_name):
     """Поиск по городу"""
+    vsp_map, city_map = get_data()
     norm_city = normalize_city(city_name)
     results = []
     
-    for record in MOCK_DATA.values():
-        if normalize_city(record['city']) == norm_city:
-            results.append(record)
+    for city, records in city_map.items():
+        if normalize_city(city) == norm_city:
+            results.extend(records)
     
     return results
 
@@ -76,7 +121,6 @@ def webhook():
     
     try:
         update = request.get_json()
-        print(f"Update: {json.dumps(update, indent=2)}")
         
         if 'message' in update:
             chat_id = update['message']['chat']['id']
@@ -90,12 +134,30 @@ def webhook():
                     "• Или город — например, `Салехард`\n\n"
                     "Я найду куратора и контакты!"
                 )
+            elif text == '/help':
+                response_text = (
+                    "🤖 **Помощь по боту-куратору ВСП**\n\n"
+                    "Доступные команды:\n"
+                    "• /start - начать работу\n"
+                    "• /help - показать эту справку\n"
+                    "• /stats - статистика базы данных\n\n"
+                    "Просто отправьте код ВСП или название города!"
+                )
+            elif text == '/stats':
+                vsp_map, city_map = get_data()
+                cities_count = len(city_map)
+                records_count = len(vsp_map)
+                response_text = (
+                    f"📊 **Статистика базы данных:**\n\n"
+                    f"• Всего ВСП: {records_count}\n"
+                    f"• Городов: {cities_count}\n"
+                    f"• Источник: {'Google Sheets' if os.environ.get('GOOGLE_CREDENTIALS') else 'Mock данные'}"
+                )
             else:
-                # Поиск по ВСП (формат XXXX/XXXX)
+                # Поиск по ВСП
                 vsp_match = re.search(r'\b(\d{4}/\d{3,4})\b', text)
                 if vsp_match:
                     vsp_code = vsp_match.group(1)
-                    print(f"Searching for VSP: {vsp_code}")
                     record = search_by_vsp(vsp_code)
                     
                     if record:
@@ -107,11 +169,7 @@ def webhook():
                             f"📱 **Мобильный:** {record['mobile']}"
                         )
                     else:
-                        available_codes = ", ".join([f"`{code}`" for code in MOCK_DATA.keys()])
-                        response_text = (
-                            f"❌ ВСП **{vsp_code}** не найден.\n\n"
-                            f"Доступные коды: {available_codes}"
-                        )
+                        response_text = f"❌ ВСП **{vsp_code}** не найден."
                 
                 # Поиск по городу
                 else:
@@ -159,21 +217,31 @@ def send_message(chat_id, text):
             "parse_mode": "Markdown"
         }
         response = requests.post(url, json=payload, timeout=10)
-        print(f"Telegram API response: {response.status_code}")
-        if response.status_code != 200:
-            print(f"Telegram API error: {response.text}")
         return response.json()
     except Exception as e:
         print(f"Error sending message: {e}")
 
 @app.route('/debug')
 def debug():
+    vsp_map, city_map = get_data()
     return jsonify({
         "bot_token_exists": bool(BOT_TOKEN),
-        "mock_records_count": len(MOCK_DATA),
-        "available_vsp_codes": list(MOCK_DATA.keys()),
+        "google_credentials_exists": bool(os.environ.get('GOOGLE_CREDENTIALS')),
+        "spreadsheet_id_exists": bool(os.environ.get('SPREADSHEET_ID')),
+        "records_count": len(vsp_map),
+        "cities_count": len(city_map),
+        "cache_age_seconds": int(time.time() - cache_timestamp) if data_cache else None,
         "status": "running"
     })
+
+@app.route('/refresh_cache')
+def refresh_cache():
+    """Принудительное обновление кэша"""
+    global data_cache, cache_timestamp
+    data_cache = None
+    cache_timestamp = 0
+    get_data()  # Обновляем кэш
+    return jsonify({"status": "cache refreshed"})
 
 if __name__ == '__main__':
     app.run(host='0.0.0.0', port=3000)
