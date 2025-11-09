@@ -7,7 +7,7 @@ import requests
 app = Flask(__name__)
 BOT_TOKEN = os.environ.get('BOT_TOKEN')
 
-# Mock данные для теста (расширенный набор)
+# Mock данные для теста
 MOCK_DATA = {
     "8369/069": {
         "vsp": "8369/069", 
@@ -44,13 +44,14 @@ def normalize_city(city: str) -> str:
     if not city:
         return ''
     city = city.lower().strip()
-    # Удаляем префиксы и окончания
     city = re.sub(r'(в\s+|во\s+|г\.?\s*|город\s*|городе\s*|г\s*)', '', city)
     city = re.sub(r'[еыуя]$', '', city)
     return city.capitalize()
 
 def search_by_vsp(vsp_code):
     """Поиск по коду ВСП"""
+    # Нормализуем код ВСП - удаляем пробелы и приводим к верхнему регистру
+    vsp_code = vsp_code.strip().upper().replace(' ', '')
     return MOCK_DATA.get(vsp_code)
 
 def search_by_city(city_name):
@@ -91,9 +92,10 @@ def webhook():
                 )
             else:
                 # Поиск по ВСП (формат XXXX/XXXX)
-                vsp_match = re.search(r'\b(\d{4}/\d{4})\b', text)
+                vsp_match = re.search(r'\b(\d{4}/\d{3,4})\b', text)
                 if vsp_match:
                     vsp_code = vsp_match.group(1)
+                    print(f"Searching for VSP: {vsp_code}")
                     record = search_by_vsp(vsp_code)
                     
                     if record:
@@ -105,7 +107,11 @@ def webhook():
                             f"📱 **Мобильный:** {record['mobile']}"
                         )
                     else:
-                        response_text = f"❌ ВСП **{vsp_code}** не найден."
+                        available_codes = ", ".join([f"`{code}`" for code in MOCK_DATA.keys()])
+                        response_text = (
+                            f"❌ ВСП **{vsp_code}** не найден.\n\n"
+                            f"Доступные коды: {available_codes}"
+                        )
                 
                 # Поиск по городу
                 else:
@@ -165,6 +171,7 @@ def debug():
     return jsonify({
         "bot_token_exists": bool(BOT_TOKEN),
         "mock_records_count": len(MOCK_DATA),
+        "available_vsp_codes": list(MOCK_DATA.keys()),
         "status": "running"
     })
 
