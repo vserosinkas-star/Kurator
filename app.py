@@ -3,6 +3,7 @@ import requests
 import os
 import logging
 import re
+from telegram import ReplyKeyboardMarkup, KeyboardButton
 
 # Настройка логирования
 logging.basicConfig(level=logging.INFO)
@@ -50,6 +51,23 @@ MOCK_DATA = {
     }
 }
 
+def get_main_keyboard():
+    """Клавиатура главного меню"""
+    keyboard = [
+        [KeyboardButton("🏢 Поиск по ВСП"), KeyboardButton("🏙️ Поиск по городу")],
+        [KeyboardButton("📍 Популярные города"), KeyboardButton("❓ Помощь")]
+    ]
+    return ReplyKeyboardMarkup(keyboard, resize_keyboard=True)
+
+def get_cities_keyboard():
+    """Клавиатура с популярными городами"""
+    keyboard = [
+        [KeyboardButton("Салехард"), KeyboardButton("Лабытнанги")],
+        [KeyboardButton("Харп"), KeyboardButton("Аксарка")],
+        [KeyboardButton("Белоярск"), KeyboardButton("↩️ Назад")]
+    ]
+    return ReplyKeyboardMarkup(keyboard, resize_keyboard=True)
+
 @app.route('/')
 def home():
     return "✅ Бот куратор ВСП работает! Используйте /start в Telegram"
@@ -73,8 +91,36 @@ def webhook():
             if text == '/start':
                 response_text = (
                     "👋 Привет! Я бот-куратор ВСП.\n\n"
-                    "Отправьте код ВСП (например: 8369/069) или название города."
+                    "Выберите тип поиска:"
                 )
+                keyboard = get_main_keyboard()
+            
+            elif text == "🏢 Поиск по ВСП":
+                response_text = "🔍 Введите код ВСП (например: 8369/069):"
+                keyboard = None
+            
+            elif text == "🏙️ Поиск по городу":
+                response_text = "🏙️ Введите название города (например: Салехард):"
+                keyboard = None
+            
+            elif text == "📍 Популярные города":
+                response_text = "📍 Выберите город:"
+                keyboard = get_cities_keyboard()
+            
+            elif text == "↩️ Назад":
+                response_text = "Главное меню:"
+                keyboard = get_main_keyboard()
+            
+            elif text == "❓ Помощь":
+                response_text = (
+                    "🤖 Помощь по боту-куратору ВСП\n\n"
+                    "• Поиск по ВСП - найти по коду отделения\n"
+                    "• Поиск по городу - найти всех кураторов в городе\n"
+                    "• Популярные города - быстрый выбор городов\n\n"
+                    "Просто нажмите на кнопку ниже или введите код ВСП/город!"
+                )
+                keyboard = get_main_keyboard()
+            
             else:
                 # Поиск по коду ВСП
                 vsp_match = re.search(r'\b(\d{4}/\d{2,5})\b', text)
@@ -88,10 +134,13 @@ def webhook():
                             f"✅ ВСП {vsp_code} г. {record['city']}\n\n"
                             f"👤 {record['fio']}\n"
                             f"📞 Контакт: {record['contact']}\n"
-                            f"📱 Мобильный: {record['mobile']}"
+                            f"📱 Мобильный: {record['mobile']}\n\n"
+                            f"🔄 Для нового поиска используйте кнопки ниже"
                         )
                     else:
                         response_text = f"❌ ВСП {vsp_code} не найден."
+                    
+                    keyboard = get_main_keyboard()
                 
                 # Поиск по городу
                 else:
@@ -101,24 +150,35 @@ def webhook():
                             records.append(record)
                     
                     if not records:
-                        response_text = f"❌ Не найдено кураторов по запросу «{text}»."
+                        response_text = (
+                            f"❌ Не найдено кураторов по запросу «{text}».\n\n"
+                            "Попробуйте другой город или используйте кнопки ниже:"
+                        )
+                        keyboard = get_main_keyboard()
                     elif len(records) == 1:
                         record = records[0]
                         response_text = (
                             f"✅ ВСП {record['vsp']} г. {record['city']}\n\n"
                             f"👤 {record['fio']}\n"
                             f"📞 Контакт: {record['contact']}\n"
-                            f"📱 Мобильный: {record['mobile']}"
+                            f"📱 Мобильный: {record['mobile']}\n\n"
+                            f"🔄 Для нового поиска используйте кнопки ниже"
                         )
+                        keyboard = get_main_keyboard()
                     else:
                         vsp_list = ", ".join(record['vsp'] for record in records)
                         response_text = (
                             f"📍 В городе {records[0]['city']} найдено несколько кураторов.\n\n"
                             f"Пожалуйста, уточните номер ВСП:\n{vsp_list}"
                         )
+                        keyboard = get_main_keyboard()
             
             # Отправляем ответ
-            success = send_telegram_message(chat_id, response_text)
+            if keyboard:
+                success = send_telegram_message(chat_id, response_text, keyboard)
+            else:
+                success = send_telegram_message(chat_id, response_text)
+                
             if success:
                 logger.info("Message sent successfully")
             else:
@@ -130,7 +190,7 @@ def webhook():
         logger.error(f"Error in webhook: {str(e)}", exc_info=True)
         return jsonify({"error": "Internal server error"}), 500
 
-def send_telegram_message(chat_id, text):
+def send_telegram_message(chat_id, text, reply_markup=None):
     """Отправка сообщения в Telegram"""
     try:
         url = f"https://api.telegram.org/bot{BOT_TOKEN}/sendMessage"
@@ -138,6 +198,17 @@ def send_telegram_message(chat_id, text):
             "chat_id": chat_id,
             "text": text
         }
+        
+        if reply_markup:
+            # Преобразуем клавиатуру в формат JSON
+            from telegram import ReplyKeyboardRemove
+            if isinstance(reply_markup, ReplyKeyboardMarkup):
+                payload["reply_markup"] = {
+                    "keyboard": reply_markup.keyboard,
+                    "resize_keyboard": reply_markup.resize_keyboard,
+                    "one_time_keyboard": reply_markup.one_time_keyboard
+                }
+        
         response = requests.post(url, json=payload, timeout=10)
         logger.info(f"Telegram API response: {response.status_code}")
         return response.status_code == 200
