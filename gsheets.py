@@ -5,6 +5,7 @@ import gspread
 from google.oauth2.service_account import Credentials
 
 # Настройка логирования
+logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
 
 # Mock данные для fallback
@@ -63,52 +64,78 @@ def init_gsheets():
         creds = Credentials.from_service_account_info(creds_dict, scopes=SCOPES)
         client = gspread.authorize(creds)
         
+        logger.info("Google Sheets client initialized successfully")
         return client
     except Exception as e:
         logger.error(f"Google Sheets init error: {e}")
         return None
 
 def load_data_from_sheets():
-    """Загрузка данных из Google Sheets"""
+    """Улучшенная загрузка данных с обработкой разных форматов"""
     try:
         client = init_gsheets()
         if not client:
-            logger.error("Failed to initialize Google Sheets client")
             return None
             
         SPREADSHEET_ID = os.environ.get('SPREADSHEET_ID')
         if not SPREADSHEET_ID:
-            logger.error("SPREADSHEET_ID not found")
             return None
             
-        logger.info(f"Opening spreadsheet with ID: {SPREADSHEET_ID}")
-        
-        # Открываем таблицу
         spreadsheet = client.open_by_key(SPREADSHEET_ID)
         sheet = spreadsheet.sheet1
         
-        # Получаем все данные
-        data = sheet.get_all_records()
-        logger.info(f"Retrieved {len(data)} rows from Google Sheets")
+        # Получаем все значения
+        all_values = sheet.get_all_values()
+        logger.info(f"Raw data: {len(all_values)} rows")
         
-        if not data:
-            logger.warning("No data found in Google Sheets")
+        if len(all_values) < 2:  # Только заголовок или пусто
+            logger.warning("Not enough data in sheet")
             return None
         
-        # Преобразуем в нужный формат
         vsp_map = {}
         city_map = {}
         
-        for row in data:
-            if len(row) >= 5:
-                # Предполагаем структуру столбцов: ВСП, ФИО, Контакт, Мобильный, Город
-                vsp = str(row[0]).strip() if row[0] else ''
-                fio = str(row[1]).strip() if row[1] else ''
-                contact = str(row[2]).strip() if row[2] else ''
-                mobile = str(row[3]).strip() if row[3] else ''
-                city = str(row[4]).strip() if row[4] else ''
+        # Автоопределение структуры по заголовкам
+        headers = [h.lower().strip() for h in all_values[0]]
+        logger.info(f"Detected headers: {headers}")
+        
+        # Определяем индексы столбцов
+        vsp_idx = None
+        fio_idx = None
+        contact_idx = None
+        mobile_idx = None
+        city_idx = None
+        
+        for i, header in enumerate(headers):
+            if any(word in header for word in ['всп', 'vsp', 'код']):
+                vsp_idx = i
+            elif any(word in header for word in ['фио', 'fio', 'имя', 'name']):
+                fio_idx = i
+            elif any(word in header for word in ['контакт', 'contact', 'телеграм', 'telegram']):
+                contact_idx = i
+            elif any(word in header for word in ['мобильный', 'mobile', 'телефон', 'phone']):
+                mobile_idx = i
+            elif any(word in header for word in ['город', 'city', 'город']):
+                city_idx = i
+        
+        # Если не нашли стандартные заголовки, используем предположения
+        if vsp_idx is None: vsp_idx = 0
+        if fio_idx is None: fio_idx = 1
+        if contact_idx is None: contact_idx = 2
+        if mobile_idx is None: mobile_idx = 3
+        if city_idx is None: city_idx = 4
+        
+        logger.info(f"Using column indices - VSP: {vsp_idx}, FIO: {fio_idx}, Contact: {contact_idx}, Mobile: {mobile_idx}, City: {city_idx}")
+        
+        # Обрабатываем данные
+        for i, row in enumerate(all_values[1:], start=2):  # Пропускаем заголовок
+            if len(row) > max(vsp_idx, fio_idx, contact_idx, mobile_idx, city_idx):
+                vsp = str(row[vsp_idx]).strip() if vsp_idx < len(row) and row[vsp_idx] else ''
+                fio = str(row[fio_idx]).strip() if fio_idx < len(row) and row[fio_idx] else ''
+                contact = str(row[contact_idx]).strip() if contact_idx < len(row) and row[contact_idx] else ''
+                mobile = str(row[mobile_idx]).strip() if mobile_idx < len(row) and row[mobile_idx] else ''
+                city = str(row[city_idx]).strip() if city_idx < len(row) and row[city_idx] else ''
                 
-                # Нормализуем код ВСП
                 vsp = normalize_vsp_code(vsp)
                 
                 if vsp and fio:
@@ -125,12 +152,16 @@ def load_data_from_sheets():
                         if city not in city_map:
                             city_map[city] = []
                         city_map[city].append(record)
+            else:
+                logger.warning(f"Row {i} has insufficient columns: {row}")
         
-        logger.info(f"Successfully processed {len(vsp_map)} records from Google Sheets")
+        logger.info(f"Processed {len(vsp_map)} records from Google Sheets")
         return vsp_map, city_map
         
     except Exception as e:
         logger.error(f"Error loading data from Google Sheets: {str(e)}")
+        import traceback
+        logger.error(f"Traceback: {traceback.format_exc()}")
         return None
 
 def normalize_vsp_code(vsp_raw):
@@ -145,3 +176,30 @@ def normalize_vsp_code(vsp_raw):
     vsp = vsp.replace(' ', '/').replace('\\', '/').replace('|', '/')
     
     return vsp
+
+def test_connection():
+    """Тест подключения к Google Sheets"""
+    try:
+        client = init_gsheets()
+        if not client:
+            return {"success": False, "error": "Failed to initialize client"}
+            
+        SPREADSHEET_ID = os.environ.get('SPREADSHEET_ID')
+        if not SPREADSHEET_ID:
+            return {"success": False, "error": "SPREADSHEET_ID not found"}
+            
+        spreadsheet = client.open_by_key(SPREADSHEET_ID)
+        sheet = spreadsheet.sheet1
+        
+        # Проверяем доступ
+        title = spreadsheet.title
+        url = spreadsheet.url
+        
+        return {
+            "success": True,
+            "spreadsheet_title": title,
+            "spreadsheet_url": url,
+            "sheet_title": sheet.title
+        }
+    except Exception as e:
+        return {"success": False, "error": str(e)}
