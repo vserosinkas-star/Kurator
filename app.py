@@ -2,10 +2,18 @@ import os
 import json
 import re
 import time
+import logging
 from flask import Flask, request, jsonify
 import requests
 from telegram import Update, ReplyKeyboardMarkup, KeyboardButton, InlineKeyboardMarkup, InlineKeyboardButton
 from telegram.ext import Application, CommandHandler, MessageHandler, filters, ContextTypes, CallbackQueryHandler
+
+# Настройка логирования
+logging.basicConfig(
+    format='%(asctime)s - %(name)s - %(levelname)s - %(message)s',
+    level=logging.INFO
+)
+logger = logging.getLogger(__name__)
 
 app = Flask(__name__)
 BOT_TOKEN = os.environ.get('BOT_TOKEN')
@@ -65,7 +73,7 @@ def get_data():
     
     # Если кэш устарел или отсутствует, обновляем
     if data_cache is None or current_time - cache_timestamp > CACHE_DURATION:
-        print("Updating data cache...")
+        logger.info("Updating data cache...")
         
         # Пытаемся загрузить из Google Sheets
         try:
@@ -74,10 +82,10 @@ def get_data():
             if sheets_data:
                 data_cache = sheets_data
                 cache_timestamp = current_time
-                print("Data loaded from Google Sheets")
+                logger.info("Data loaded from Google Sheets")
                 return data_cache
         except Exception as e:
-            print(f"Error loading from Google Sheets: {e}")
+            logger.error(f"Error loading from Google Sheets: {e}")
         
         # Если Google Sheets не доступен, используем mock данные
         vsp_map = MOCK_DATA
@@ -91,7 +99,7 @@ def get_data():
         
         data_cache = (vsp_map, city_map)
         cache_timestamp = current_time
-        print("Data loaded from MOCK_DATA (fallback)")
+        logger.info("Data loaded from MOCK_DATA (fallback)")
     
     return data_cache
 
@@ -126,7 +134,8 @@ def get_main_keyboard():
     """Клавиатура главного меню"""
     keyboard = [
         [KeyboardButton("🏢 Поиск по ВСП"), KeyboardButton("🏙️ Поиск по городу")],
-        [KeyboardButton("📍 Популярные города"), KeyboardButton("❓ Помощь")]
+        [KeyboardButton("📍 Популярные города"), KeyboardButton("📊 Статистика")],
+        [KeyboardButton("❓ Помощь")]
     ]
     return ReplyKeyboardMarkup(keyboard, resize_keyboard=True)
 
@@ -147,6 +156,10 @@ def get_vsp_buttons(records):
             f"🏢 {record['vsp']} - {record['fio'].split()[0]}", 
             callback_data=f"vsp_{record['vsp']}"
         )])
+    
+    # Добавляем кнопку "Назад"
+    keyboard.append([InlineKeyboardButton("↩️ Назад к городам", callback_data="back_to_cities")])
+    
     return InlineKeyboardMarkup(keyboard)
 
 async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
@@ -168,13 +181,32 @@ async def help_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
         "🤖 *Помощь по боту-куратору ВСП*\n\n"
         "• *Поиск по ВСП* - найти по коду отделения\n"
         "• *Поиск по городу* - найти всех кураторов в городе\n"
-        "• *Популярные города* - быстрый выбор городов\n\n"
+        "• *Популярные города* - быстрый выбор городов\n"
+        "• *Статистика* - информация о базе данных\n\n"
         "Просто нажмите на кнопку ниже или введите код ВСП/город!"
     )
     await update.message.reply_text(
         help_text,
         reply_markup=get_main_keyboard(),
         parse_mode="Markdown"
+    )
+
+async def stats_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """Показывает статистику базы данных"""
+    vsp_map, city_map = get_data()
+    
+    stats_text = (
+        f"📊 *Статистика базы данных*\n\n"
+        f"• Всего ВСП: *{len(vsp_map)}*\n"
+        f"• Городов: *{len(city_map)}*\n"
+        f"• Обновлено: *{time.strftime('%H:%M:%S')}*\n\n"
+        f"🏙️ *Города:* {', '.join(list(city_map.keys())[:5])}{'...' if len(city_map) > 5 else ''}"
+    )
+    
+    await update.message.reply_text(
+        stats_text,
+        parse_mode="Markdown",
+        reply_markup=get_main_keyboard()
     )
 
 async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
@@ -207,6 +239,9 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
     
     elif text == "❓ Помощь":
         await help_command(update, context)
+    
+    elif text == "📊 Статистика":
+        await stats_command(update, context)
     
     else:
         # Автоматическое определение типа запроса
@@ -252,6 +287,9 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
             else:
                 # Несколько кураторов - показываем кнопки для выбора
                 city_name = records[0]['city']
+                # Сохраняем город в контексте для кнопки "Назад"
+                context.user_data['last_city'] = city_name
+                
                 await update.message.reply_text(
                     f"📍 В городе *{city_name}* найдено *{len(records)}* кураторов:\n\n"
                     "Выберите ВСП:",
@@ -277,6 +315,27 @@ async def button_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
             text=response_text,
             parse_mode="Markdown"
         )
+    
+    elif query.data == 'back_to_cities':
+        # Возврат к списку городов
+        await query.edit_message_text(
+            text="📍 Выберите город:",
+            reply_markup=get_cities_keyboard()
+        )
+
+async def error_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """Обработчик ошибок"""
+    logger.error(f"Exception while handling an update: {context.error}")
+    
+    try:
+        # Отправляем сообщение об ошибке пользователю
+        if update and update.effective_chat:
+            await context.bot.send_message(
+                chat_id=update.effective_chat.id,
+                text="❌ Произошла ошибка при обработке запроса. Пожалуйста, попробуйте позже."
+            )
+    except Exception as e:
+        logger.error(f"Error in error handler: {e}")
 
 def format_record_response(record, vsp_code=None):
     """Форматирование ответа с информацией о кураторе"""
@@ -297,7 +356,7 @@ def setup_bot():
     """Настройка бота"""
     global bot_application
     if not BOT_TOKEN:
-        print("BOT_TOKEN not found")
+        logger.error("BOT_TOKEN not found")
         return None
     
     try:
@@ -306,14 +365,18 @@ def setup_bot():
         # Добавляем обработчики
         application.add_handler(CommandHandler("start", start))
         application.add_handler(CommandHandler("help", help_command))
+        application.add_handler(CommandHandler("stats", stats_command))
         application.add_handler(CallbackQueryHandler(button_callback))
         application.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, handle_message))
         
+        # Добавляем обработчик ошибок
+        application.add_error_handler(error_handler)
+        
         bot_application = application
-        print("Bot setup completed successfully")
+        logger.info("Bot setup completed successfully")
         return application
     except Exception as e:
-        print(f"Bot setup error: {e}")
+        logger.error(f"Bot setup error: {e}")
         return None
 
 # Инициализируем бота при старте
@@ -336,13 +399,24 @@ def webhook():
         update_data = request.get_json()
         update = Update.de_json(update_data, bot_application.bot)
         
-        # Обрабатываем обновление асинхронно
+        # Исправленная асинхронная обработка
+        async def process_update_async():
+            await bot_application.process_update(update)
+        
         import asyncio
-        asyncio.run(bot_application.process_update(update))
+        if hasattr(bot_application, '_initialized') and bot_application._initialized:
+            loop = asyncio.new_event_loop()
+            asyncio.set_event_loop(loop)
+            loop.run_until_complete(process_update_async())
+            loop.close()
+        else:
+            logger.error("Bot application not initialized properly")
         
         return jsonify({"status": "ok"})
     except Exception as e:
-        print(f"Webhook error: {e}")
+        logger.error(f"Webhook error: {e}")
+        import traceback
+        logger.error(f"Traceback: {traceback.format_exc()}")
         return jsonify({"error": str(e)}), 500
 
 @app.route('/debug')
@@ -364,6 +438,30 @@ def refresh_cache():
     cache_timestamp = 0
     get_data()
     return jsonify({"status": "cache refreshed"})
+
+@app.route('/test_gsheets')
+def test_gsheets():
+    """Тестовый endpoint для проверки Google Sheets"""
+    try:
+        from gsheets import load_data_from_sheets
+        result = load_data_from_sheets()
+        
+        if result:
+            vsp_map, city_map = result
+            return jsonify({
+                "success": True,
+                "records_loaded": len(vsp_map),
+                "sample_records": list(vsp_map.values())[:3] if vsp_map else []
+            })
+        else:
+            return jsonify({"success": False, "error": "No data returned from Google Sheets"})
+            
+    except Exception as e:
+        return jsonify({
+            "success": False, 
+            "error": str(e),
+            "error_type": type(e).__name__
+        })
 
 if __name__ == '__main__':
     app.run(host='0.0.0.0', port=3000)
