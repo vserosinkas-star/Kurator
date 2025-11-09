@@ -245,3 +245,28 @@ def refresh_cache():
 
 if __name__ == '__main__':
     app.run(host='0.0.0.0', port=3000)
+
+
+@app.route('/test_gsheets')
+def test_gsheets():
+    """Тестовый endpoint для проверки Google Sheets"""
+    try:
+        from gsheets import load_data_from_sheets
+        result = load_data_from_sheets()
+        
+        if result:
+            vsp_map, city_map = result
+            return jsonify({
+                "success": True,
+                "records_loaded": len(vsp_map),
+                "sample_records": list(vsp_map.values())[:3]  # Первые 3 записи
+            })
+        else:
+            return jsonify({"success": False, "error": "No data returned from Google Sheets"})
+            
+    except Exception as e:
+        return jsonify({
+            "success": False, 
+            "error": str(e),
+            "error_type": type(e).__name__
+        })
