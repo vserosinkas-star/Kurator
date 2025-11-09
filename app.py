@@ -3,7 +3,7 @@ import requests
 import os
 import logging
 import re
-from telegram import ReplyKeyboardMarkup, KeyboardButton
+import json
 
 # Настройка логирования
 logging.basicConfig(level=logging.INFO)
@@ -53,20 +53,26 @@ MOCK_DATA = {
 
 def get_main_keyboard():
     """Клавиатура главного меню"""
-    keyboard = [
-        [KeyboardButton("🏢 Поиск по ВСП"), KeyboardButton("🏙️ Поиск по городу")],
-        [KeyboardButton("📍 Популярные города"), KeyboardButton("❓ Помощь")]
-    ]
-    return ReplyKeyboardMarkup(keyboard, resize_keyboard=True)
+    return {
+        "keyboard": [
+            [{"text": "🏢 Поиск по ВСП"}, {"text": "🏙️ Поиск по городу"}],
+            [{"text": "📍 Популярные города"}, {"text": "❓ Помощь"}]
+        ],
+        "resize_keyboard": True,
+        "one_time_keyboard": False
+    }
 
 def get_cities_keyboard():
     """Клавиатура с популярными городами"""
-    keyboard = [
-        [KeyboardButton("Салехард"), KeyboardButton("Лабытнанги")],
-        [KeyboardButton("Харп"), KeyboardButton("Аксарка")],
-        [KeyboardButton("Белоярск"), KeyboardButton("↩️ Назад")]
-    ]
-    return ReplyKeyboardMarkup(keyboard, resize_keyboard=True)
+    return {
+        "keyboard": [
+            [{"text": "Салехард"}, {"text": "Лабытнанги"}],
+            [{"text": "Харп"}, {"text": "Аксарка"}],
+            [{"text": "Белоярск"}, {"text": "↩️ Назад"}]
+        ],
+        "resize_keyboard": True,
+        "one_time_keyboard": False
+    }
 
 @app.route('/')
 def home():
@@ -94,22 +100,25 @@ def webhook():
                     "Выберите тип поиска:"
                 )
                 keyboard = get_main_keyboard()
+                send_telegram_message(chat_id, response_text, keyboard)
             
             elif text == "🏢 Поиск по ВСП":
                 response_text = "🔍 Введите код ВСП (например: 8369/069):"
-                keyboard = None
+                send_telegram_message(chat_id, response_text)
             
             elif text == "🏙️ Поиск по городу":
                 response_text = "🏙️ Введите название города (например: Салехард):"
-                keyboard = None
+                send_telegram_message(chat_id, response_text)
             
             elif text == "📍 Популярные города":
                 response_text = "📍 Выберите город:"
                 keyboard = get_cities_keyboard()
+                send_telegram_message(chat_id, response_text, keyboard)
             
             elif text == "↩️ Назад":
                 response_text = "Главное меню:"
                 keyboard = get_main_keyboard()
+                send_telegram_message(chat_id, response_text, keyboard)
             
             elif text == "❓ Помощь":
                 response_text = (
@@ -120,6 +129,7 @@ def webhook():
                     "Просто нажмите на кнопку ниже или введите код ВСП/город!"
                 )
                 keyboard = get_main_keyboard()
+                send_telegram_message(chat_id, response_text, keyboard)
             
             else:
                 # Поиск по коду ВСП
@@ -141,6 +151,7 @@ def webhook():
                         response_text = f"❌ ВСП {vsp_code} не найден."
                     
                     keyboard = get_main_keyboard()
+                    send_telegram_message(chat_id, response_text, keyboard)
                 
                 # Поиск по городу
                 else:
@@ -155,6 +166,7 @@ def webhook():
                             "Попробуйте другой город или используйте кнопки ниже:"
                         )
                         keyboard = get_main_keyboard()
+                        send_telegram_message(chat_id, response_text, keyboard)
                     elif len(records) == 1:
                         record = records[0]
                         response_text = (
@@ -165,6 +177,7 @@ def webhook():
                             f"🔄 Для нового поиска используйте кнопки ниже"
                         )
                         keyboard = get_main_keyboard()
+                        send_telegram_message(chat_id, response_text, keyboard)
                     else:
                         vsp_list = ", ".join(record['vsp'] for record in records)
                         response_text = (
@@ -172,17 +185,7 @@ def webhook():
                             f"Пожалуйста, уточните номер ВСП:\n{vsp_list}"
                         )
                         keyboard = get_main_keyboard()
-            
-            # Отправляем ответ
-            if keyboard:
-                success = send_telegram_message(chat_id, response_text, keyboard)
-            else:
-                success = send_telegram_message(chat_id, response_text)
-                
-            if success:
-                logger.info("Message sent successfully")
-            else:
-                logger.error("Failed to send message")
+                        send_telegram_message(chat_id, response_text, keyboard)
         
         return jsonify({"status": "ok"})
         
@@ -200,17 +203,14 @@ def send_telegram_message(chat_id, text, reply_markup=None):
         }
         
         if reply_markup:
-            # Преобразуем клавиатуру в формат JSON
-            from telegram import ReplyKeyboardRemove
-            if isinstance(reply_markup, ReplyKeyboardMarkup):
-                payload["reply_markup"] = {
-                    "keyboard": reply_markup.keyboard,
-                    "resize_keyboard": reply_markup.resize_keyboard,
-                    "one_time_keyboard": reply_markup.one_time_keyboard
-                }
+            payload["reply_markup"] = reply_markup
         
         response = requests.post(url, json=payload, timeout=10)
         logger.info(f"Telegram API response: {response.status_code}")
+        
+        if response.status_code != 200:
+            logger.error(f"Telegram API error: {response.text}")
+            
         return response.status_code == 200
     except Exception as e:
         logger.error(f"Error sending Telegram message: {e}")
@@ -223,6 +223,19 @@ def debug():
         "mock_data_records": len(MOCK_DATA),
         "status": "running"
     })
+
+@app.route('/test')
+def test():
+    """Тестовый endpoint для проверки отправки сообщений"""
+    try:
+        # Отправляем тестовое сообщение
+        success = send_telegram_message(
+            chat_id=7826094158,  # Ваш chat_id
+            text="✅ Тестовое сообщение от бота"
+        )
+        return jsonify({"status": "sent", "success": success})
+    except Exception as e:
+        return jsonify({"error": str(e)}), 500
 
 if __name__ == '__main__':
     app.run(host='0.0.0.0', port=3000)
