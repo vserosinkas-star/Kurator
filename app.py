@@ -164,7 +164,7 @@ def webhook():
                         city_part = f" г. {record['city']}" if record['city'] else ''
                         response_text = (
                             f"✅ **ВСП {vsp_code}{city_part}**\n\n"
-                            f"👤 **{record['fio']}**\n"
+                            f"🧑 **{record['fio']}**\n"
                             f"📞 **Контакт:** {record['contact']}\n"
                             f"📱 **Мобильный:** {record['mobile']}"
                         )
@@ -186,7 +186,7 @@ def webhook():
                         record = records[0]
                         response_text = (
                             f"✅ **ВСП {record['vsp']} г. {record['city']}**\n\n"
-                            f"👤 **{record['fio']}**\n"
+                            f"🧑 **{record['fio']}**\n"
                             f"📞 **Контакт:** {record['contact']}\n"
                             f"📱 **Мобильный:** {record['mobile']}"
                         )
