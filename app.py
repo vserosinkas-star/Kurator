@@ -154,7 +154,7 @@ def webhook():
                     f"• Всего ВСП: {len(vsp_map)}\n"
                     f"• Городов: {len(city_map)}\n"
                     f"• Обновлено: {time.strftime('%H:%M:%S')}\n\n"
-                    f"Источник: {'Google Sheets' if os.environ.get('GOOGLE_CREDENTIALS') else 'Mock данные'}"
+                    
                 )
                 keyboard = get_main_keyboard()
                 send_telegram_message(chat_id, stats_text, keyboard)
