@@ -223,7 +223,7 @@ def webhook():
                     else:
                         vsp_list = ", ".join(record['vsp'] for record in records)
                         response_text = (
-                            f"📍 В городе {text} найдено {len(records)} кураторов.\n\n"
+                            f"📍 В городе {text} найдено {len(records)} ВСП.\n\n"
                             f"Пожалуйста, уточните номер ВСП:\n{vsp_list}"
                         )
                         keyboard = get_main_keyboard()
