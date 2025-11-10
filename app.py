@@ -70,20 +70,35 @@ def get_main_keyboard():
 
 def get_cities_keyboard():
     """Клавиатура с популярными городами"""
-    vsp_map, city_map = get_data()
-    cities = list(city_map.keys())[:6]  # Берем первые 6 городов
+    # Список конкретных городов, которые мы хотим показывать
+    TARGET_CITIES = [
+        "Екатеринбург", 
+        "Уфа", 
+        "Челябинск", 
+        "Курган"
+    ]
     
+    # Получаем актуальные данные
+    vsp_map, city_map = get_data()
+    
+    # Фильтруем города - оставляем только те, которые есть в данных
+    available_cities = [city for city in TARGET_CITIES if city in city_map]
+    
+    # Если в данных нет наших целевых городов, берем первые 6 из доступных
+    if not available_cities:
+        available_cities = list(city_map.keys())[:6]
+    
+    # Создаем клавиатуру с городами (по 2 города в ряду)
     keyboard = []
     row = []
-    for i, city in enumerate(cities):
+    for i, city in enumerate(available_cities):
         row.append({"text": city})
-        if len(row) == 2 or i == len(cities) - 1:
+        if len(row) == 2 or i == len(available_cities) - 1:
             keyboard.append(row)
             row = []
     
     # Добавляем кнопку "Назад"
-    if keyboard:
-        keyboard.append([{"text": "↩️ Назад"}])
+    keyboard.append([{"text": "↩️ Назад"}]),
     
     return {
         "keyboard": keyboard,
