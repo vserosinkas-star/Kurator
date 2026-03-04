@@ -189,7 +189,7 @@ def webhook():
                             f"✅ ВСП {vsp_code} г. {record['city']}\n\n"
                             f"👤 {record['fio']}\n"
                             f"📞 Контакт: {record['contact']}\n"
-                            f"📱 Мобильный: {record['mobile']}\n\n"
+                           
                             f"🔄 Для нового поиска используйте кнопки ниже"
                         )
                     else:
@@ -215,7 +215,7 @@ def webhook():
                             f"✅ ВСП {record['vsp']} г. {record['city']}\n\n"
                             f"👤 {record['fio']}\n"
                             f"📞 Контакт: {record['contact']}\n"
-                            f"📱 Мобильный: {record['mobile']}\n\n"
+                            
                             f"🔄 Для нового поиска используйте кнопки ниже"
                         )
                         keyboard = get_main_keyboard()
